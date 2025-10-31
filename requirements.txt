@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv         # For securely loading your secret key
+google-genai          # For interacting with the Gemini LLM
