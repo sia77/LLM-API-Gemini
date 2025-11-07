@@ -5,6 +5,7 @@ import asyncio
 from dotenv import load_dotenv
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from google import genai
@@ -23,6 +24,14 @@ except Exception as e:
     # You might want to exit or handle this error differently
     
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],  
+    allow_headers=["*"],  
+)
 
 # --- 2. Pydantic Data Models ---
 # Defines the structure of the data coming IN
@@ -47,6 +56,8 @@ async def handle_llm_query(request_data: QueryRequest):
     Handles the query, calls the Gemini API, and returns the response.
     """
     try:
+
+        print(f"request_data: {request_data}")
         # Call the Gemini API asynchronously
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
