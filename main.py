@@ -1,6 +1,5 @@
 # main.py
 
-import os
 import asyncio
 from dotenv import load_dotenv
 
@@ -27,10 +26,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  
-    allow_headers=["*"],  
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- 2. Pydantic Data Models ---
