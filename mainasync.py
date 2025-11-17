@@ -27,10 +27,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],  
-    allow_headers=["*"],  
+    allow_origins = ["*"], 
+    allow_credentials = True,
+    allow_methods = ["*"],  
+    allow_headers = ["*"],  
 )
 
 # --- Load .env explicitly ---
@@ -45,7 +45,7 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise RuntimeError("GEMINI_API_KEY not found in .env")
 
-genai.configure(api_key=api_key)
+genai.configure(api_key = api_key)
 
 # --- 2. DATA MODELS ---
 class QueryRequest(BaseModel):
@@ -72,22 +72,29 @@ async def query(request_data: QueryRequest):
     Handles the query, calls the Gemini API, and returns the response as stream chunks.
     """
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel(    
+            model_name="gemini-2.5-flash",
+            # system_instruction="Respond as if you are Yoda."
+        )
 
         # streaming generator using the current SDK
         def stream_response():
             for chunk in model.generate_content(
-                request_data.prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=request_data.temperature
+                contents = request_data.prompt,
+                generation_config = genai.types.GenerationConfig(
+                    temperature = request_data.temperature
                 ),
-                stream=True  # enable streaming here
+                
+                stream = True  # enable streaming here
             ):
                 if chunk.text:
+                    #print(f"chunk.text: {chunk.text}")
                     yield chunk.text.encode("utf-8")
 
         async def async_stream():
-            for text in stream_response():
+            chunk = stream_response()
+            for text in chunk:
+                #print(f"text: {text}")
                 yield text
                 await asyncio.sleep(0)
 
@@ -95,5 +102,3 @@ async def query(request_data: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
