@@ -49,7 +49,7 @@ def read_root():
     """Basic health check endpoint."""
     return {"status": "ok", "message": "LLM API is running and ready."}
 
-@app.post("/api/query", response_model=LLMResponse)
+@app.post("/api/chat/complete", response_model=LLMResponse)
 async def handle_llm_query(request_data: QueryRequest):
     """
     Handles the query, calls the Gemini API, and returns the response.
