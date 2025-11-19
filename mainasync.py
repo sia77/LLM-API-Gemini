@@ -83,12 +83,21 @@ async def query(request_data: QueryRequest):
                 contents = request_data.prompt,
                 generation_config = genai.types.GenerationConfig(
                     temperature = request_data.temperature
-                ),                
+                ),             
                 stream = True  # enable streaming here
             ):
-                if chunk.text:
-                    #print(f"chunk.text: {chunk.text}")
-                    yield chunk.text.encode("utf-8")
+                if not hasattr(chunk, "candidates") or not chunk.candidates:
+                    continue
+
+                candidate = chunk.candidates[0]
+
+                if not hasattr(candidate, "content") or not candidate.content:
+                    continue
+
+                for part in candidate.content.parts:
+                    if hasattr(part, "text") and part.text is not None:
+                        yield chunk.text.encode("utf-8")
+                    
 
         async def async_stream():
             chunk = stream_response()

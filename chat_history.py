@@ -8,6 +8,7 @@ Implements the history version which means it passes along the previous conversa
 
 import os
 import asyncio
+from typing import List
 
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from typing import List
+
 from pydantic import BaseModel
 
 from dotenv import load_dotenv
@@ -86,6 +87,8 @@ async def query(request_data: QueryRequest):
             }
         ]
 
+        #print(f"content: {contents}")
+
         model = genai.GenerativeModel(    
             model_name="gemini-2.5-flash",
             # system_instruction="Respond as if you are Yoda."
@@ -100,8 +103,17 @@ async def query(request_data: QueryRequest):
                 ),
                 contents= contents
             ):
-                if chunk.text:
-                    yield chunk.text.encode("utf-8")
+                if not hasattr(chunk, "candidates") or not chunk.candidates:
+                    continue
+
+                candidate = chunk.candidates[0]
+
+                if not hasattr(candidate, "content") or not candidate.content:
+                    continue
+
+                for part in candidate.content.parts:
+                    if hasattr(part, "text") and part.text is not None:
+                        yield chunk.text.encode("utf-8")
             
         
         #asynchronizer
