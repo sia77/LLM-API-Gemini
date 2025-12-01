@@ -108,4 +108,4 @@ async def query(request_data: QueryRequest):
         return StreamingResponse(async_stream(), media_type="text/plain")
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

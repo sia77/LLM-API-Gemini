@@ -1,26 +1,20 @@
-#chat_history
-"""
-This module initializes the FastAPI application, loads environment variables,
-sets up the CORS middleware, and defines the primary /api/query endpoint
+# chat_history_json.py
 
-Implements the history version which means it passes along the previous conversation to provide more content with the new query
-"""
+"""This implementation will response in chunks of json object {"json/application", ""}"""
 
 import os
-import asyncio
-from typing import List
-
 from pathlib import Path
+from typing import List
+import json
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-
+import google.generativeai as genai
 from pydantic import BaseModel
 
-from dotenv import load_dotenv
-import google.generativeai as genai
 
 # --- 1. INIT ---
 app = FastAPI()
@@ -30,7 +24,7 @@ app.add_middleware(
     allow_origins = ["*"], 
     allow_credentials = True,
     allow_methods = ["*"],  
-    allow_headers = ["*"],  
+    allow_headers = ["*"],
 )
 
 # --- Load .env explicitly ---
@@ -47,16 +41,17 @@ if not api_key :
 
 genai.configure(api_key = api_key)
 
-# --- 2. DATA MODELS ---
 
-class HistoryItem(BaseModel):
+# --- Data Model ----
+
+class HistoryItem (BaseModel):
     """Defines a history item object with 'user' or 'model' roles"""
     role:str
-    text: str
+    text:str
 
-class QueryRequest(BaseModel):
+class Request (BaseModel):
     """Request object"""
-    prompt: str
+    prompt:str
     temperature: float = 0.7
     history: List[HistoryItem]
 
@@ -65,44 +60,41 @@ def read_root():
     """Basic health check"""
     return { "status" : "ok", "message": "LLM API is running and ready."}
 
-@app.post("/api/chat/stream")
-async def query(request_data: QueryRequest):    
-    """
-    Handles the query, calls the Gemini API, and returns the response as stream chunks.
-    """
+@app.post("/api/chat/stream/json")
+async def query(request_data: Request):
 
     try:
 
-        contents = [
+        contents =[
             *[
                 {
                     "role": item.role,
                     "parts": [{"text": item.text}]
-                }
+                }              
                 for item in request_data.history
             ],
             {
-                "role": "user",
+                "role":"user",
                 "parts": [{"text": request_data.prompt}]
             }
         ]
-
-        #print(f"content: {contents}")
 
         model = genai.GenerativeModel(    
             model_name="gemini-2.5-flash",
             # system_instruction="Respond as if you are Yoda."
         )
 
-        # Streaming generator
+        async_generator = await model.generate_content_async(
+            stream=True,
+            generation_config=genai.types.GenerationConfig(
+                temperature=request_data.temperature
+            ),
+            contents = contents
+        )
+        
+
         async def stream_response_async():
-            async for chunk in await model.generate_content_async(
-                stream = True,
-                generation_config = genai.types.GenerationConfig(
-                    temperature = request_data.temperature
-                ),
-                contents= contents
-            ):
+            async for chunk in async_generator:
                 if not hasattr(chunk, "candidates") or not chunk.candidates:
                     continue
 
@@ -113,17 +105,10 @@ async def query(request_data: QueryRequest):
 
                 for part in candidate.content.parts:
                     if hasattr(part, "text") and part.text is not None:
-                        yield chunk.text.encode("utf-8")
-            
-        
-        # #asynchronizer
-        # async def async_stream():
-        #     chunk = stream_response()
-        #     for text in chunk:
-        #         yield text
-        #         await asyncio.sleep(0)
-        
-        return StreamingResponse(stream_response_async(), media_type="text/plain")
+                        yield (json.dumps({"text": part.text}) + "\n").encode("utf-8")
+
+        return StreamingResponse(stream_response_async(), media_type="application/x-ndjson")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
