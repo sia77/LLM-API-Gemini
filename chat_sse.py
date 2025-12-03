@@ -1,22 +1,17 @@
-# chat_history_json.py
-
-"""This implementation will response in chunks of json object {"json/application", ""}"""
-
+"""This implementation is an example of EventSource
+"""
+import json
 import os
 from pathlib import Path
-from typing import List
-import json
-
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-
+from fastapi.responses import StreamingResponse
 import google.generativeai as genai
 from pydantic import BaseModel
 
 
-# --- 1. INIT ---
+# --- INIT ---
 app = FastAPI()
 
 app.add_middleware(
@@ -27,7 +22,7 @@ app.add_middleware(
     allow_headers = ["*"],
 )
 
-# --- Load .env explicitly ---
+# --- LOAD ENV ---
 ENV_PATH = Path(__file__).parent / ".env"
 
 if not ENV_PATH.exists():
@@ -36,48 +31,21 @@ if not ENV_PATH.exists():
 load_dotenv(dotenv_path = ENV_PATH)
 api_key = os.getenv("GEMINI_API_KEY")
 
-if not api_key :
+if not api_key: 
     raise RuntimeError("GEMINI_API_KEY not found in .env")
 
-genai.configure(api_key = api_key)
+genai.configure(api_key = api_key)   
 
-
-# --- Data Model ----
-
-class HistoryItem (BaseModel):
-    """Defines a history item object with 'user' or 'model' roles"""
-    role:str
-    text:str
-
-class Request (BaseModel):
-    """Request object"""
-    prompt:str
-    temperature: float = 0.7
-    history: List[HistoryItem]
-
+# --- Health Check ---
 @app.get("/")
-def read_root():
+def health_check():
     """Basic health check"""
     return { "status" : "ok", "message": "LLM API is running and ready."}
 
-@app.post("/api/chat/stream/json")
-async def query(request_data: Request):
+@app.get("/api/chat/stream/sse")
+async def query(prompt: str):
 
     try:
-
-        contents =[
-            *[
-                {
-                    "role": item.role,
-                    "parts": [{"text": item.text}]
-                }              
-                for item in request_data.history
-            ],
-            {
-                "role":"user",
-                "parts": [{"text": request_data.prompt}]
-            }
-        ]
 
         model = genai.GenerativeModel(    
             model_name="gemini-2.5-flash",
@@ -87,13 +55,13 @@ async def query(request_data: Request):
         async_generator = await model.generate_content_async(
             stream=True,
             generation_config=genai.types.GenerationConfig(
-                temperature=request_data.temperature
+                temperature=0.7 #request_data.temperature
             ),
-            contents = contents
+            contents = [{"role": "user", "parts": [{"text": prompt}]}],
         )
-        
 
-        async def stream_response_async():
+
+        async def stream_response():
             async for chunk in async_generator:
                 if not hasattr(chunk, "candidates") or not chunk.candidates:
                     continue
@@ -105,10 +73,10 @@ async def query(request_data: Request):
 
                 for part in candidate.content.parts:
                     if hasattr(part, "text") and part.text is not None:
-                        yield (json.dumps({"text": part.text}) + "\n").encode("utf-8")
+                        payload = json.dumps({"text": part.text})
+                        yield f"data: {payload}\n\n"
 
-        return StreamingResponse(stream_response_async(), media_type="application/x-ndjson")
+        return StreamingResponse(stream_response(), media_type="text/event-stream")    
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-
