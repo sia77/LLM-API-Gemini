@@ -55,6 +55,17 @@ async def query_stream_text(
                 "provider_details": e.raw_response
             }
         )
+    except Exception as e:
+        # BLUNT FIX: This catches everything else (NameError, AttributeError, etc.)
+        # and sends the actual error string to your browser/curl
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "UNEXPECTED_CRASH",
+                "type": type(e).__name__,
+                "message": str(e)
+            }
+        )
     # except LLMServiceError as e:
     #     raise HTTPException(
     #         status_code=500,
