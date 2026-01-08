@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-from .models import HistoryItem 
+from models import HistoryItem 
 
 
 def load_and_get_api_key():
