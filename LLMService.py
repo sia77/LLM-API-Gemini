@@ -142,9 +142,16 @@ class LLMService:
             print(f"Gemini API Communication Error: {e}")
             raise LLMServiceError(f"Failed to communicate with the LLM API: {e}") from e
         
+# class LLMServiceError(Exception):
+#     """Custom exception raised when the LLM service fails to communicate 
+#     or returns an unexpected non-standard error."""
+
 class LLMServiceError(Exception):
-    """Custom exception raised when the LLM service fails to communicate 
-    or returns an unexpected non-standard error."""
+    def __init__(self, message: str, status_code: int = 500, raw_response: str = ""):
+        self.message = message
+        self.status_code = status_code
+        self.raw_response = raw_response
+        super().__init__(self.message)
 
 
 def get_llm_service() -> LLMService:

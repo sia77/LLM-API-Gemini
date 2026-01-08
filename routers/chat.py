@@ -45,10 +45,21 @@ async def query_stream_text(
 
         return StreamingResponse(stream_formatter_text(raw_stream), media_type="text/plain")
     except LLMServiceError as e:
+        # This now returns the ACTUAL status code (e.g., 401, 429) 
+        # and the ACTUAL reason why it failed.
         raise HTTPException(
-            status_code=500,
-            detail=f"External LLM service failed: {e}"
-        ) from e
+            status_code=e.status_code,
+            detail={
+                "error": "LLM_PROVIDER_ERROR",
+                "message": e.message,
+                "provider_details": e.raw_response
+            }
+        )
+    # except LLMServiceError as e:
+    #     raise HTTPException(
+    #         status_code=500,
+    #         detail=f"External LLM service failed: {e}"
+    #     ) from e
     
 @router.post("/stream/json")
 async def query_stream_json(
