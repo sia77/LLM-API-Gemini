@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from ..LLMService import LLMService, get_llm_service, LLMServiceError
-from ..models import QueryRequest
-from ..stream_formatters import stream_formatter_json, stream_formatter_text, stream_formatter_sse
+from LLMService import LLMService, get_llm_service, LLMServiceError
+from models import QueryRequest
+from stream_formatters import stream_formatter_json, stream_formatter_text, stream_formatter_sse
 
 router = APIRouter(
     tags = ["chat"]
