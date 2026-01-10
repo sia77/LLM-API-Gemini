@@ -11,15 +11,13 @@ from models import HistoryItem
 
 def load_and_get_api_key():
     """Loads environment variables, and returns api_key"""
-    ENV_PATH = Path(__file__).parent / ".env"
-    if not ENV_PATH.exists():
-        raise RuntimeError(f".env file doesn't exist on this path: {ENV_PATH}")
     
-    load_dotenv(dotenv_path = ENV_PATH)
+    # load_dotenv(dotenv_path = ENV_PATH)
+    load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not found in .env")
+        raise RuntimeError("GEMINI_API_KEY is not set in the environment variables.")
     
     return api_key
 
