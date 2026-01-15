@@ -1,171 +1,93 @@
 """This class provide LLM configuration and communication"""
 
 import os
-from pathlib import Path
+import logging
+from typing import List, AsyncGenerator
 
 from dotenv import load_dotenv
 import google.generativeai as genai
-
 from models import HistoryItem 
 
+logger = logging.getLogger(__name__)
+
+# Load environment variables once at the module level
+load_dotenv(override=False)
 
 def load_and_get_api_key():
-    """Loads environment variables, and returns api_key"""
-    
-    # load_dotenv(dotenv_path = ENV_PATH)
-    load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
-
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in the environment variables.")
-    
+        raise RuntimeError("GEMINI_API_KEY is not set.")
     return api_key
 
-
 class LLMService:
-    """A service class to manage interaction with the Gemini API."""
-
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.model_name = "gemini-2.5-flash"
+        # Use the stable production name unless you are specifically testing 2.0/Experimental
+        self.model_name = "gemini-1.5-flash" 
         genai.configure(api_key=self.api_key)
+        # Initialize once to save resources
+        self.model = genai.GenerativeModel(model_name=self.model_name)
 
-    
-    async def get_stream_sse(self, prompt:str, temperature:float):
-        """
-        Handles the logic for calling the streaming Gemini API using SSE.
-        """
+    async def _generate_stream(self, contents: list, temperature: float) -> AsyncGenerator[str, None]:
+        """Core private method to handle the actual API communication."""
         try:
-            contents = [{"role": "user", "parts": [{"text": prompt}]}]
-
-            model = genai.GenerativeModel(    
-                model_name=self.model_name,
-            )
-
-            async for chunk in await model.generate_content_async(
+            config = genai.types.GenerationConfig(temperature=temperature)
+            async for chunk in await self.model.generate_content_async(
+                contents=contents,
                 stream=True,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=temperature
-                ),
-                contents = contents,
+                generation_config=config,
             ):
-                yield chunk.text
+                if chunk.text:
+                    yield chunk.text
         except Exception as e:
-            print(f"Gemini API Communication Error: {e}")
-            raise LLMServiceError(f"Failed to communicate with the LLM API: {e}") from e
+            logger.exception("Gemini API communication failed")
+            raise LLMServiceError(
+                internal_message="Gemini API call failed",
+                public_message="LLM service is temporarily unavailable",
+                status_code=502,
+                raw_response=str(e),
+            ) from e
+
+    async def get_stream_sse(self, prompt: str, temperature: float):
+        """Experimental version 1: Standard SSE wrapper."""
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        async for text in self._generate_stream(contents, temperature):
+            yield text
+
+    async def get_stream_no_history(self, prompt: str, temperature: float):
+        """Experimental version 2: Explicitly ignoring history."""
+        # Functionally identical to SSE version for now
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        async for text in self._generate_stream(contents, temperature):
+            yield text
+
+    async def get_stream(self, prompt: str, history: List[HistoryItem], temperature: float):
+        """Experimental version 3: Full history injection."""
+        contents = [
+            {"role": item.role, "parts": [{"text": item.text}]}
+            for item in history
+        ]
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
         
-
-    async def get_stream_no_history(self, prompt:str, temperature:float):
-        """
-        Handles the logic for calling the streaming Gemini API, but doesn't include the existing history - It was meant as a test
-        """
-
-        try:
-
-            contents = [
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                }
-            ]
-
-            model = genai.GenerativeModel(    
-                model_name = self.model_name,
-            )
-
-            async for chunk in await model.generate_content_async(
-                stream = True,
-                generation_config = genai.types.GenerationConfig(
-                    temperature = temperature
-                ),
-                contents= contents
-            ):
-                yield chunk.text
-                
-        except Exception as e:
-            print(f"Gemini API Communication Error: {e}")
-            raise LLMServiceError(f"Failed to communicate with the LLM API: {e}") from e
-
-
-
-
-
-    async def get_stream(self, prompt: str, history: list[HistoryItem], temperature: float):
-        """
-        Handles the logic for calling the streaming Gemini API.
-        """
-        try:
-
-            contents = [
-                *[
-                    {
-                        "role": item.role,
-                        "parts": [{"text": item.text}]
-                    }
-                    for item in history
-                ],
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                }
-            ]
-
-            model = genai.GenerativeModel(    
-                model_name=self.model_name,
-            )
-
-            async for chunk in await model.generate_content_async(
-                stream = True,
-                generation_config = genai.types.GenerationConfig(
-                    temperature = temperature
-                ),
-                contents= contents
-            ):
-                yield chunk.text
-                    
-                    # if not hasattr(chunk, "candidates") or not chunk.candidates:
-                    #     continue
-
-                    # candidate = chunk.candidates[0]
-
-                    # if not hasattr(candidate, "content") or not candidate.content:
-                    #     continue
-
-                    # for part in candidate.content.parts:
-                    #     if hasattr(part, "text") and part.text is not None:
-                    #         yield chunk.text
-
-             
-        except Exception as e:
-            print(f"Gemini API Communication Error: {e}")
-            raise LLMServiceError(f"Failed to communicate with the LLM API: {e}") from e
-        
-# class LLMServiceError(Exception):
-#     """Custom exception raised when the LLM service fails to communicate 
-#     or returns an unexpected non-standard error."""
+        async for text in self._generate_stream(contents, temperature):
+            yield text
 
 class LLMServiceError(Exception):
-    def __init__(self, message: str, status_code: int = 500, raw_response: str = ""):
-        self.message = message
+    def __init__(self, *, internal_message: str, public_message: str, status_code: int, raw_response: str):
+        self.internal_message = internal_message
+        self.public_message = public_message
         self.status_code = status_code
         self.raw_response = raw_response
-        super().__init__(self.message)
-
+        super().__init__(internal_message)
 
 def get_llm_service() -> LLMService:
-    """
-    FastAPI Dependency Provider.
-    Loads the API key and returns a configured LLMService instance.
-    """
     try:
-        # 1. Load the necessary configuration (API key)
-        api_key = load_and_get_api_key()
-        
-        # 2. Instantiate and return the service object
-        return LLMService(api_key=api_key)
-    
-    except RuntimeError as e:
-        # If config/env loading fails, raise an exception that will 
-        # result in a 500 error before the request even hits the endpoint.
-        # It's okay to raise a standard exception here, or a custom one.
-        raise Exception(f"Configuration Error: {e}") from e
+        return LLMService(api_key=load_and_get_api_key())
+    except Exception as e:
+        logger.exception("LLM service configuration failed")
+        raise LLMServiceError(
+            internal_message="Failed to initialize",
+            public_message="Service unavailable",
+            status_code=500,
+            raw_response=str(e),
+        ) from e
