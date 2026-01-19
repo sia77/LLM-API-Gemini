@@ -1,6 +1,6 @@
 fastapi[all]
 uvicorn[standard]
-pydantic=2.12.5
+pydantic==2.12.5
 python-dotenv         # For securely loading your secret key
 google-genai          # For interacting with the Gemini LLM
 google-generativeai==0.3.0
