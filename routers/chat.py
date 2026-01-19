@@ -26,7 +26,7 @@ async def query_stream_sse(
     except LLMServiceError as e:
         raise HTTPException(
             status_code=500,
-            detail=f"External LLM service failed: {e}"
+            detail=f"External LLM service failed: {e.public_message}"
         ) from e
 
 @router.post("/stream/text")
@@ -47,7 +47,7 @@ async def query_stream_text(
     except LLMServiceError as e:
         raise HTTPException(
             status_code=e.status_code,
-            detail={"error": "LLM_PROVIDER_ERROR", "message": e.message}
+            detail={"error": "LLM_PROVIDER_ERROR", "message": e.public_message}
         )
     except Exception as e:
         raise HTTPException(
@@ -84,6 +84,6 @@ async def query_stream_json(
     except LLMServiceError as e:
         raise HTTPException(
             status_code=500,
-            detail=f"External LLM service failed: {e}"
+            detail=f"External LLM service failed: {e.public_message}"
         ) from e
     
