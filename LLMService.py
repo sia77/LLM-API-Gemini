@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     """
     gemini_api_key: SecretStr = Field(..., alias="GEMINI_API_KEY")
     # You can easily swap models for experiments here
-    gemini_model: str = Field(default="gemini-2.5-flash")
+    gemini_model: str = Field(default="gemini-2.5-flash-lite")
     
     # Standard Pydantic V2 way to link a .env file
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
