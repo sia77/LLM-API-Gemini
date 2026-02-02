@@ -1,4 +1,5 @@
 import json
+from typing import AsyncGenerator
 
 
 async def stream_formatter_json(raw_stream):
@@ -28,15 +29,28 @@ async def stream_formatter_text(raw_stream):
         yield text_chunk.encode("utf-8")
 
     
-async def stream_formatter_sse(raw_stream):
+async def stream_formatter_sse(raw_stream) -> AsyncGenerator[str, None]:
     """
-    Takes the raw text stream from LLMService and formats it 
-    into plain text.
+    Formats an async text stream into SSE events:
+        - 'chunk' for incremental text
+        - 'done' when the stream finishes normally
+        - 'error' if an exception occurs
     """
-    async for text_chunk in raw_stream:       
+    try:
+        async for text_chunk in raw_stream:
+            payload = json.dumps({"text":text_chunk})
+            yield f"event: chunk\ndata: {payload}\n\n"
+
+        # When the generator finishes normallly
+        yield "event: done\ndata: {}\n\n"
     
-        data = { "text":text_chunk }
-        payload = json.dumps(data)
-        yield f"data:{payload}\n\n"
+    except Exception as e:
+        # Send an error event with a message
+        error_payload = json.dumps({"message": str(e)})
+        yield f"event: sse_error\ndata:{error_payload}\n\n"
+
+        
+
+
 
 

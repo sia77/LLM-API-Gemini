@@ -3,7 +3,7 @@
 from functools import lru_cache
 
 import logging
-from typing import List, AsyncGenerator
+from typing import List, AsyncGenerator, Optional
 
 import google.generativeai as genai
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,10 +50,10 @@ class LLMService:
         self.model = genai.GenerativeModel(model_name=model_name)
         logger.info(f"LLMService initialized with model: {model_name}")
 
-    async def _generate_stream(self, contents: list, temperature: float) -> AsyncGenerator[str, None]:
+    async def _core_generator(self, contents: list, temperature: float) -> AsyncGenerator[str, None]:
         """Private engine ensures all experimental methods share the same logic/error handling."""
         try:
-            config = genai.types.GenerationConfig(temperature=temperature)
+            config = genai.types.GenerationConfig(temperature = temperature)
             # Standard async streaming call
             response = await self.model.generate_content_async(
                 contents=contents,
@@ -74,20 +74,43 @@ class LLMService:
 
     # --- Experimental Wrappers ---
 
-    async def get_stream_sse(self, prompt: str, temperature: float):
-        contents = [{"role": "user", "parts": [{"text": prompt}]}]
-        async for text in self._generate_stream(contents, temperature):
-            yield text
+    async def get_complete(
+        self, 
+        prompt: str, 
+        temperature: float,
+        history: Optional[List[HistoryItem]] = None
+    ) -> str:
+        
+        contents = []
 
-    async def get_stream_no_history(self, prompt: str, temperature: float):
-        contents = [{"role": "user", "parts": [{"text": prompt}]}]
-        async for text in self._generate_stream(contents, temperature):
-            yield text
+        if history:
+            contents.extend( { "role": item.role, "parts": [{"text": item.text}]} for item in history )
 
-    async def get_stream(self, prompt: str, history: List[HistoryItem], temperature: float):
-        contents = [{"role": item.role, "parts": [{"text": item.text}]} for item in history]
         contents.append({"role": "user", "parts": [{"text": prompt}]})
-        async for text in self._generate_stream(contents, temperature):
+
+        bits = [text async for text in self._core_generator(contents, temperature)]
+        return "".join(bits) or "No response generated."
+
+    async def get_stream_sse(self, prompt: str, temperature: float) -> AsyncGenerator[str, None]:
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        async for text in self._core_generator(contents, temperature):
+            yield text
+
+    async def get_stream(
+        self, 
+        prompt: str,
+        temperature: float, 
+        history: Optional[List[HistoryItem]] = None
+    ) -> AsyncGenerator[str, None]:
+        
+        contents = [] 
+        
+        if history: 
+            contents.extend( {"role": item.role, "parts": [{"text": item.text}]} for item in history ) 
+            
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+
+        async for text in self._core_generator(contents, temperature):
             yield text
 
 

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -11,4 +11,4 @@ class QueryRequest(BaseModel):
     """Request object"""
     prompt: str
     temperature: float = 0.7
-    history: List[HistoryItem]
+    history: Optional[List[HistoryItem]] = None

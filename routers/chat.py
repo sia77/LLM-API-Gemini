@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
 from LLMService import LLMService, get_llm_service, LLMServiceError
@@ -17,17 +17,54 @@ def health():
 @router.get("/stream/sse")
 async def query_stream_sse(
     prompt: str,
+    temperature:float=0.7,
     llm_service:LLMService = Depends(get_llm_service)
 ):
     """This endpoint handles sse GET requests - no history due to GET string length limitations"""
     try:
-        raw_stream = llm_service.get_stream_sse(prompt, 0.7)
+        raw_stream = llm_service.get_stream_sse(prompt, temperature)
         return StreamingResponse(stream_formatter_sse(raw_stream), media_type="text/event-stream")
     except LLMServiceError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"External LLM service failed: {e.public_message}"
-        ) from e
+        raise HTTPException( 
+            status_code = e.status_code, 
+            detail = { 
+                "error": "LLM_PROVIDER_ERROR", 
+                "type": type(e).__name__, 
+                "message": e.public_message 
+            } 
+        )
+
+@router.post("/complete/text")
+async def query_complete_text(
+    request_data:QueryRequest,
+    llm_service:LLMService = Depends(get_llm_service)
+):
+    """This end point responds in complete of plain text format"""
+
+    try:
+        raw_stream = await llm_service.get_complete(
+            request_data.prompt, 
+            request_data.temperature,
+            request_data.history
+        )
+        return Response(raw_stream, media_type="text/plain")
+    except LLMServiceError as e: 
+        raise HTTPException( 
+            status_code=e.status_code, 
+            detail = { 
+                "error": "LLM_PROVIDER_ERROR", 
+                "message": e.public_message 
+            } 
+        ) 
+    except Exception as e: 
+        raise HTTPException( 
+            status_code=500, 
+            detail = { 
+                "error": "UNEXPECTED_CRASH", 
+                "type": type(e).__name__, 
+                "message": str(e) 
+            } 
+        )
 
 @router.post("/stream/text")
 async def query_stream_text(
@@ -38,31 +75,33 @@ async def query_stream_text(
 
     try:
         raw_stream = llm_service.get_stream(
-            request_data.prompt, 
-            request_data.history, 
-            request_data.temperature
+            request_data.prompt,
+            request_data.temperature, 
+            request_data.history            
         )
 
-        return StreamingResponse(stream_formatter_text(raw_stream), media_type="text/plain")
-    except LLMServiceError as e:
-        raise HTTPException(
-            status_code=e.status_code,
-            detail={"error": "LLM_PROVIDER_ERROR", "message": e.public_message}
+        return StreamingResponse(
+            stream_formatter_text(raw_stream), 
+            media_type="text/plain"
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "UNEXPECTED_CRASH",
-                "type": type(e).__name__,
-                "message": str(e)
-            }
+    
+    except LLMServiceError as e: 
+        raise HTTPException( 
+            status_code=e.status_code, 
+            detail = { 
+                "error": "LLM_PROVIDER_ERROR", 
+                "message": e.public_message 
+            } 
+        ) 
+    except Exception as e: 
+        raise HTTPException( 
+            status_code=500, 
+            detail = { 
+                "error": "UNEXPECTED_CRASH", 
+                "type": type(e).__name__, 
+                "message": str(e) 
+            } 
         )
-    # except LLMServiceError as e:
-    #     raise HTTPException(
-    #         status_code=500,
-    #         detail=f"External LLM service failed: {e}"
-    #     ) from e
     
 @router.post("/stream/json")
 async def query_stream_json(
@@ -73,17 +112,30 @@ async def query_stream_json(
 
     try:
         raw_stream = llm_service.get_stream(
-            request_data.prompt, 
-            request_data.history, 
-            request_data.temperature
+            request_data.prompt,             
+            request_data.temperature,
+            request_data.history
         )
         return StreamingResponse(
             stream_formatter_json(raw_stream), 
             media_type="application/x-ndjson"
         )
-    except LLMServiceError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"External LLM service failed: {e.public_message}"
-        ) from e
+    
+    except LLMServiceError as e: 
+        raise HTTPException( 
+            status_code=e.status_code, 
+            detail = { 
+                "error": "LLM_PROVIDER_ERROR", 
+                "message": e.public_message 
+            } 
+        ) 
+    except Exception as e: 
+        raise HTTPException( 
+            status_code=500, 
+            detail = { 
+                "error": "UNEXPECTED_CRASH", 
+                "type": type(e).__name__, 
+                "message": str(e) 
+            } 
+        )
     
