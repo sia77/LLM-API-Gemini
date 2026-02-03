@@ -1,6 +1,12 @@
 import json
 from typing import AsyncGenerator
 
+def complete_formatter_text(result: str) -> str: 
+    return result 
+
+def complete_formatter_json(result: str) -> dict: 
+    return {"text": result}
+
 
 async def stream_formatter_json(raw_stream):
     """
