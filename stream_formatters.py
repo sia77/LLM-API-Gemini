@@ -18,7 +18,7 @@ async def stream_formatter_json(raw_stream):
         data = {"text": text_chunk}
         
         # 2. Serialize to a JSON string and add a newline (NDJSON)
-        json_string = json.dumps(data) + "\n"
+        json_string = json.dumps(data, ensure_ascii=False) + "\n"
         
         # 3. Encode the string to bytes for the StreamingResponse
         yield json_string.encode("utf-8")

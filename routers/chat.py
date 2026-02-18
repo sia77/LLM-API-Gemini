@@ -1,6 +1,7 @@
+from enum import Enum
 import json
-from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, Response
+from typing import Annotated, Literal
+from fastapi import APIRouter, Depends, HTTPException, Header, Response
 from fastapi.responses import StreamingResponse
 
 from LLMService import LLMService, get_llm_service, LLMServiceError
@@ -10,6 +11,12 @@ from stream_formatters import complete_formatter_json, complete_formatter_text, 
 router = APIRouter(
     tags = ["chat"]
 )
+
+class AcceptHeader(str, Enum):
+    json = "application/json"
+    text = "text/plain"
+    # sse  = "text/event-stream"
+    # ndjson = "application/x-ndjson"
 
 @router.get("/")
 def health():
@@ -42,15 +49,21 @@ COMPLETE_FORMATTERS = {
 }
     
 @router.post("/complete")
-async def query_complete_text(
+async def query_complete(
     request_data:QueryRequest,
-    format : Literal["text", "json"] = "text", 
+    # I switeched form accept to x_format so that swagger doesn't override the selection picked. 
+    # I discovered swagger's internal logic always picks 'application/json' for document purposes
+    x_format: Annotated[AcceptHeader, Header()] = AcceptHeader.text, 
+    #format_key:Literal["text", "json"] = "text",
     llm_service:LLMService = Depends(get_llm_service)
 ):
     """This end point responds in complete in the form of text/plain or application/json format"""
 
     try:
-        formatter, media_type = COMPLETE_FORMATTERS[format]
+
+        is_json = (x_format == AcceptHeader.json)
+        format_key = "json" if is_json else "text"  
+        formatter, media_type = COMPLETE_FORMATTERS[format_key]
         result = await llm_service.get_complete(
             request_data.prompt, 
             request_data.temperature,
@@ -58,7 +71,11 @@ async def query_complete_text(
         )
 
         body = formatter(result)
-        return Response( content =json.dumps(body) if format == "json" else body, media_type = media_type )
+
+        if isinstance(body, dict):
+             return body # FastAPI auto-converts dict to JSON response
+             
+        return Response(content=body, media_type=media_type)
     except LLMServiceError as e: 
         raise HTTPException( 
             status_code=e.status_code, 
@@ -86,15 +103,21 @@ FORMATTERS = {
 
 
 @router.post("/stream")
-async def query_stream_text(
+async def query_stream(
     request_data:QueryRequest,
-    format:Literal["text", "json"] = "json",
+    #format_key:Literal["text", "json"] = "json",
+    x_format: Annotated[AcceptHeader, Header()] = AcceptHeader.text, # FastAPI extracts 'Accept' header here
     llm_service:LLMService = Depends(get_llm_service)
 ):
     """This end point responds in stream in the form of text/plain or application/json format"""
 
     try:
-        formatter, media_type = FORMATTERS[format]
+
+        is_json = (x_format == AcceptHeader.json)
+
+        format_key = "json" if is_json else "text"
+
+        formatter, media_type = FORMATTERS[format_key]
 
         raw_stream = llm_service.get_stream(
             request_data.prompt,
