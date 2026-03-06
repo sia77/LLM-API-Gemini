@@ -53,7 +53,7 @@ async def query_complete(
     request_data:QueryRequest,
     # I switeched form accept to x_format so that swagger doesn't override the selection picked. 
     # I discovered swagger's internal logic always picks 'application/json' for document purposes
-    x_format: Annotated[AcceptHeader, Header()] = AcceptHeader.text, 
+    x_format: Annotated[AcceptHeader, Header()] = AcceptHeader.json, 
     #format_key:Literal["text", "json"] = "text",
     llm_service:LLMService = Depends(get_llm_service)
 ):
@@ -61,9 +61,11 @@ async def query_complete(
 
     try:
 
+
         is_json = (x_format == AcceptHeader.json)
         format_key = "json" if is_json else "text"  
         formatter, media_type = COMPLETE_FORMATTERS[format_key]
+        print(f'*****{media_type}')
         result = await llm_service.get_complete(
             request_data.prompt, 
             request_data.temperature,
@@ -106,7 +108,7 @@ FORMATTERS = {
 async def query_stream(
     request_data:QueryRequest,
     #format_key:Literal["text", "json"] = "json",
-    x_format: Annotated[AcceptHeader, Header()] = AcceptHeader.text, # FastAPI extracts 'Accept' header here
+    x_format: Annotated[AcceptHeader, Header()] = AcceptHeader.json, # FastAPI extracts 'Accept' header here
     llm_service:LLMService = Depends(get_llm_service)
 ):
     """This end point responds in stream in the form of text/plain or application/json format"""
