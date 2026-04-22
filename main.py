@@ -18,4 +18,5 @@ app.add_middleware(
     allow_headers = ["*"],
 )
 
+#Registering chat.py
 app.include_router(chat.router, prefix="/api/v1/chat")

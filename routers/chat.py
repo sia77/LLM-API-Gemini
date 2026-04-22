@@ -1,5 +1,8 @@
 from enum import Enum
+import json
+from pathlib import Path
 from typing import Annotated, Literal
+from venv import logger
 from fastapi import APIRouter, Depends, HTTPException, Header, Response
 from fastapi.responses import StreamingResponse
 
@@ -65,7 +68,6 @@ async def query_complete(
         is_json = (x_format == AcceptHeader.json)
         format_key = "json" if is_json else "text"  
         formatter, media_type = COMPLETE_FORMATTERS[format_key]
-        print(f'*****{media_type}')
         result = await llm_service.get_complete(
             request_data.prompt, 
             request_data.temperature,
@@ -152,4 +154,20 @@ async def query_stream(
                 "message": str(e) 
             } 
         )
+    
+@router.get('/models')
+async def get_models():   
+    # Locate the file relative to this python file 
+    file_path = Path(__file__).parent.parent / "data" / "supported_models.json"
+    try:
+        with open(file_path, "r") as f:
+        # This converts the JSON text directly into a Python list/dict
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.error(f"Configuration Error: {e}")
+        #Return the 'Safe Shape' so React doesn't break
+        return {"models":[], "total_count":0}
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return {"models":[], "total_count":0}
     
