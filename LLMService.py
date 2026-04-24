@@ -67,7 +67,6 @@ class LLMService:
                     yield chunk.text
         except Exception as e:
             logger.exception("Gemini API communication failed")
-            # You can keep your custom LLMServiceError here
             raise e
 
     # --- Your Required Methods ---
