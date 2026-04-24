@@ -43,19 +43,6 @@ class LLMService:
         self.default_model = default_model
         logger.info(f"LLMService initialized with default model: {default_model}")
 
-    async def list_available_models(self) -> List[dict]:
-        """GET implementation: Fetches models dynamically from the API."""
-        try:
-            # .aio is the modern namespace for all async operations
-            models_pager = await self.client.aio.models.list()
-            return [
-                {"value": m.name, "label": m.display_name}
-                for m in models_pager if 'generateContent' in m.supported_actions
-            ]
-        except Exception as e:
-            logger.error(f"Failed to fetch models: {e}")
-            return []
-
     async def _core_generator(
         self, 
         contents: list, 
@@ -65,10 +52,12 @@ class LLMService:
         """Private engine for all streaming/SSE methods."""
         try:
             # Use the frontend's choice, or fall back to the .env default
-            print(f"default: {self.default_model}")
+            #print(f"default: {self.default_model}")
             target_model = model_override or self.default_model
+            #print(f"contents: {contents}")
+            #print(f"target_model: {target_model}")
             config = types.GenerateContentConfig(temperature=temperature)
-
+            #print(f"config: {config}")
             async for chunk in await self.client.aio.models.generate_content_stream(
                 model=target_model,
                 contents=contents,
@@ -85,51 +74,56 @@ class LLMService:
 
     async def get_complete(
         self, 
-        prompt: str, 
-        temperature: float,
-        model_name: Optional[str] = None,
-        history: Optional[List[HistoryItem]] = None
+        prompt: str,
+        **kwargs
     ) -> str:
         """Full response implementation."""
-        contents = self._prepare_contents(prompt, history)
-        config = types.GenerateContentConfig(temperature=temperature)
+        contents = self._prepare_contents(prompt, history = kwargs.get("history"))
+        config = types.GenerateContentConfig(temperature = kwargs.get("temperature"))
         
         response = await self.client.aio.models.generate_content(
-            model=model_name or self.default_model,
+            model= kwargs.get("model_name") or self.default_model,
             contents=contents,
             config=config
         )
         return response.text or "No response generated."
+    
+
 
     async def get_stream(
         self, 
         prompt: str,
-        temperature: float, 
-        model_name: Optional[str] = None,
-        history: Optional[List[HistoryItem]] = None
+        **kwargs
     ) -> AsyncGenerator[str, None]:
         """Standard chunk streaming."""
-        contents = self._prepare_contents(prompt, history)
-        async for text in self._core_generator(contents, temperature, model_name):
-            yield text
+        contents = self._prepare_contents(prompt, kwargs.get("history"))
+        #print(f"***contents: {contents}")
+        async for text in self._core_generator(contents, kwargs.get("temperature"), kwargs.get("model_name")):
+            yield text   
 
-    async def get_stream_sse(
+
+    async def get_raw_sse_stream(
         self, 
         prompt: str, 
-        temperature: float, 
-        model_name: Optional[str] = None
+        **kwargs
     ) -> AsyncGenerator[str, None]:
         """SSE formatted streaming."""
-        async for text in self.get_stream(prompt, temperature, model_name=model_name):
-            yield f"data: {text}\n\n"
+        async for text in self.get_stream(prompt, **kwargs):
+            yield text #There is already a utility that formats SSE responses
 
     def _prepare_contents(self, prompt: str, history: Optional[List[HistoryItem]]) -> list:
         contents = []
         if history:
             contents.extend({"role": item.role, "parts": [{"text": item.text}]} for item in history)
         contents.append({"role": "user", "parts": [{"text": prompt}]})
-        return contents
-    
+        return contents 
+
+
+
+
+
+    """This is going to be used as some sort of checkup to update the list of available models. 
+        It could run every often and then update the list, and save it to DB"""    
     async def ping_model_by_id(self, model_id:str) -> Optional[str]:
         """
             The 'Functional' coroutine: Tries to generate 1 token.
@@ -220,152 +214,3 @@ def get_llm_service() -> LLMService:
         default_model=settings.gemini_model
     )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# """This class provide LLM configuration and communication"""
-
-# from functools import lru_cache
-
-# import logging
-# from typing import List, AsyncGenerator, Optional
-
-# import google.generativeai as genai
-# from pydantic_settings import BaseSettings, SettingsConfigDict
-# from pydantic import Field, SecretStr
-# from models import HistoryItem 
-
-# logger = logging.getLogger(__name__)
-
-# # --- 1. Configuration Layer (Pydantic Settings) ---
-
-# class Settings(BaseSettings):
-#     """
-#     Centralized configuration. Pydantic handles validation and .env loading.
-#     If GEMINI_API_KEY is missing, this will raise an error immediately.
-#     """
-#     gemini_api_key: SecretStr = Field(..., alias="GEMINI_API_KEY")
-#     # You can easily swap models for experiments here
-#     gemini_model: str = Field(default="gemini-2.5-flash-lite")
-    
-#     # Standard Pydantic V2 way to link a .env file
-#     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-# @lru_cache
-# def get_settings() -> Settings:
-#     """Returns a cached version of settings so .env is only read once."""
-#     return Settings() # type: ignore
-
-# # --- 2. Error Handling ---
-
-# class LLMServiceError(Exception):
-#     def __init__(self, *, internal_message: str, public_message: str, status_code: int, raw_response: str):
-#         self.internal_message = internal_message
-#         self.public_message = public_message
-#         self.status_code = status_code
-#         self.raw_response = raw_response
-#         super().__init__(internal_message)
-
-# # --- 3. The LLM Service ---
-
-# class LLMService:
-#     def __init__(self, api_key: str, model_name: str):
-#         # Configuration happens once when the class is instantiated
-#         genai.configure(api_key=api_key)
-#         self.model = genai.GenerativeModel(model_name=model_name)
-#         logger.info(f"LLMService initialized with model: {model_name}")
-
-#     async def _core_generator(self, contents: list, temperature: float) -> AsyncGenerator[str, None]:
-#         """Private engine ensures all experimental methods share the same logic/error handling."""
-#         try:
-#             config = genai.types.GenerationConfig(temperature = temperature)
-#             # Standard async streaming call
-#             response = await self.model.generate_content_async(
-#                 contents=contents,
-#                 stream=True,
-#                 generation_config=config,
-#             )
-#             async for chunk in response:
-#                 if chunk.text:
-#                     yield chunk.text
-#         except Exception as e:
-#             logger.exception("Gemini API communication failed")
-#             raise LLMServiceError(
-#                 internal_message=f"Gemini API failure: {str(e)}",
-#                 public_message="The AI service is currently unavailable.",
-#                 status_code=502,
-#                 raw_response=str(e),
-#             ) from e
-
-#     # --- Experimental Wrappers ---
-
-#     async def get_complete(
-#         self, 
-#         prompt: str, 
-#         temperature: float,
-#         history: Optional[List[HistoryItem]] = None
-#     ) -> str:
-        
-#         contents = []
-
-#         if history:
-#             contents.extend( { "role": item.role, "parts": [{"text": item.text}]} for item in history )
-
-#         contents.append({"role": "user", "parts": [{"text": prompt}]})
-
-#         bits = [text async for text in self._core_generator(contents, temperature)]
-#         return "".join(bits) or "No response generated."
-
-#     async def get_stream_sse(self, prompt: str, temperature: float) -> AsyncGenerator[str, None]:
-#         contents = [{"role": "user", "parts": [{"text": prompt}]}]
-#         async for text in self._core_generator(contents, temperature):
-#             yield text
-
-#     async def get_stream(
-#         self, 
-#         prompt: str,
-#         temperature: float, 
-#         history: Optional[List[HistoryItem]] = None
-#     ) -> AsyncGenerator[str, None]:
-        
-#         contents = [] 
-        
-#         if history: 
-#             contents.extend( {"role": item.role, "parts": [{"text": item.text}]} for item in history ) 
-            
-#         contents.append({"role": "user", "parts": [{"text": prompt}]})
-
-#         async for text in self._core_generator(contents, temperature):
-#             yield text
-
-
-# # --- 4. The Singleton Provider (FastAPI Dependency) ---
-
-# @lru_cache
-# def get_llm_service() -> LLMService:
-#     """
-#     This is the "Magic" function. 
-#     @lru_cache ensures that LLMService is only instantiated ONCE.
-#     """
-#     settings = get_settings()
-#     return LLMService(
-#         api_key=settings.gemini_api_key.get_secret_value(), 
-#         model_name=settings.gemini_model
-#     )

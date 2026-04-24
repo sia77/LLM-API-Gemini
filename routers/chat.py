@@ -1,7 +1,7 @@
 from enum import Enum
 import json
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 from venv import logger
 from fastapi import APIRouter, Depends, HTTPException, Header, Response
 from fastapi.responses import StreamingResponse
@@ -29,11 +29,17 @@ def health():
 async def query_stream_sse(
     prompt: str,
     temperature:float=0.7,
+    model_name:Optional[str]=None,
     llm_service:LLMService = Depends(get_llm_service)
 ):
     """This endpoint handles sse GET requests - no history due to GET string length limitations"""
     try:
-        raw_stream = llm_service.get_stream_sse(prompt, temperature)
+        settings = { 
+            k:v 
+            for k,v in {"temperature":temperature, "model_name":model_name}.items() 
+            if v is not None
+        }        
+        raw_stream = llm_service.get_raw_sse_stream(prompt, **settings)
         return StreamingResponse(stream_formatter_sse(raw_stream), media_type="text/event-stream")
     except LLMServiceError as e:
         raise HTTPException( 
@@ -43,6 +49,17 @@ async def query_stream_sse(
                 "type": type(e).__name__, 
                 "message": e.public_message 
             } 
+        )
+    except Exception as e:
+        # This is the "Safety Net" for everything else.
+        # Log the real 'e' so you can fix it later.
+        logger.error(f"Unhandled system crash: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail = { 
+                "error": "UNEXPECTED_CRASH",
+                "message": "An internal error occurred. Please try again later."
+            }
         )
     
 COMPLETE_FORMATTERS = { 
@@ -63,15 +80,23 @@ async def query_complete(
     """This end point responds in complete in the form of text/plain or application/json format"""
 
     try:
-
-
         is_json = (x_format == AcceptHeader.json)
         format_key = "json" if is_json else "text"  
-        formatter, media_type = COMPLETE_FORMATTERS[format_key]
+        formatter, media_type = COMPLETE_FORMATTERS[format_key]  
+        settings = { 
+            k:v
+            for k,v in
+            {
+                "temperature":request_data.temperature, 
+                "history":request_data.history, 
+                "model_name":request_data.model_name
+            }.items()
+            if v is not None 
+        }
+        print(f"list: {settings}")      
         result = await llm_service.get_complete(
             request_data.prompt, 
-            request_data.temperature,
-            request_data.history
+            **settings
         )
 
         body = formatter(result)
@@ -89,15 +114,16 @@ async def query_complete(
             } 
         ) 
     except Exception as e: 
+        # This is the "Safety Net" for everything else.
+        # Log the real 'e' so you can fix it later.
+        logger.error(f"Unhandled system crash: {str(e)}", exc_info=True)
         raise HTTPException( 
             status_code=500, 
-            detail = { 
-                "error": "UNEXPECTED_CRASH", 
-                "type": type(e).__name__, 
-                "message": str(e) 
+            detail={
+                "error": "UNEXPECTED_CRASH",
+                "message": "An internal error occurred. Please try again later."
             } 
         )
-    
 
     
 FORMATTERS = {
@@ -125,11 +151,19 @@ async def query_stream(
         format_key = "json" if is_json else "text"
 
         formatter, media_type = FORMATTERS[format_key]
+        settings = {
+            k:v
+            for k,v in {
+                "temperature":request_data.temperature, 
+                "history":request_data.history,
+                "model_name":request_data.model_name
+            }.items()
+            if v is not None
+        }
 
         raw_stream = llm_service.get_stream(
             request_data.prompt,
-            request_data.temperature, 
-            request_data.history            
+            **settings            
         )
 
         return StreamingResponse(
@@ -146,12 +180,14 @@ async def query_stream(
             } 
         ) 
     except Exception as e: 
+        # This is the "Safety Net" for everything else.
+        # Log the real 'e' so you can fix it later.
+        logger.error(f"Unhandled system crash: {str(e)}", exc_info=True)
         raise HTTPException( 
             status_code=500, 
-            detail = { 
-                "error": "UNEXPECTED_CRASH", 
-                "type": type(e).__name__, 
-                "message": str(e) 
+            detail={
+                "error": "UNEXPECTED_CRASH",
+                "message": "An internal error occurred. Please try again later."
             } 
         )
     

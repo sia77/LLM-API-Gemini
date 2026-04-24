@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class HistoryItem(BaseModel):
@@ -12,3 +12,4 @@ class QueryRequest(BaseModel):
     prompt: str
     temperature: float = 0.7
     history: Optional[List[HistoryItem]] = None
+    model_name: Optional[str] = Field(None, examples=["gemini-2.5-flash-lite"])
