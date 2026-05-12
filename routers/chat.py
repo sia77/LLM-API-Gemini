@@ -74,7 +74,7 @@ async def query_complete(
         }.items()
         if v is not None 
     }
-    
+   
     result = await llm_service.get_complete(
         request_data.prompt, 
         **settings

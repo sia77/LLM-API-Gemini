@@ -148,7 +148,7 @@ class LLMService:
     ) -> AsyncGenerator[str, None]:
         """Standard chunk streaming."""
         contents = self._prepare_contents(prompt, kwargs.get("history"))
-        target_model = kwargs.get("model_name")
+        target_model = kwargs.get("model_name") or self.default_model
         config = types.GenerateContentConfig(temperature=kwargs.get("temperature"))
 
         init_stream = await self.client.aio.models.generate_content_stream(
