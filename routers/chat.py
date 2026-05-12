@@ -29,7 +29,7 @@ def health():
 async def query_stream_sse(
     prompt: str,
     temperature:float=0.7,
-    model_name:Optional[str]=None,
+    model_name:Optional[str]="gemini-2.5-flash-lite",
     llm_service:LLMService = Depends(get_llm_service)
 ):
     """This endpoint handles sse GET requests - no history due to GET string length limitations"""
@@ -93,7 +93,7 @@ async def query_complete(
             }.items()
             if v is not None 
         }
-        print(f"list: {settings}")      
+     
         result = await llm_service.get_complete(
             request_data.prompt, 
             **settings
@@ -147,7 +147,6 @@ async def query_stream(
     try:
 
         is_json = (x_format == AcceptHeader.json)
-
         format_key = "json" if is_json else "text"
 
         formatter, media_type = FORMATTERS[format_key]
@@ -161,17 +160,31 @@ async def query_stream(
             if v is not None
         }
 
-        raw_stream = llm_service.get_stream(
+        gen_obj = await llm_service.get_stream(
             request_data.prompt,
             **settings            
         )
 
+        try:
+            # We use __anext__() to manually grab the first chunk
+            first_chunk = await gen_obj.__anext__()
+        except StopAsyncIteration:
+            first_chunk = "" # Handle empty responses gracefully
+
+
+        async def combined_gen():
+            if first_chunk:
+                yield first_chunk
+            async for chunk in gen_obj:
+                yield chunk
+
         return StreamingResponse(
-            formatter(raw_stream), 
+            formatter(combined_gen()), 
             media_type=media_type
         )
     
-    except LLMServiceError as e: 
+    except LLMServiceError as e:
+
         raise HTTPException( 
             status_code=e.status_code, 
             detail = { 

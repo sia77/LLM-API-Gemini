@@ -1,13 +1,23 @@
+import ast
 import asyncio
 from functools import lru_cache
 import logging
-from typing import Any, Dict, List, AsyncGenerator, Optional
+import re
+import sys
+from typing import Any, Dict, List, AsyncGenerator, Optional, TypedDict
 
 from google import genai
 from google.genai import types
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr
-from models import HistoryItem 
+from models import HistoryItem
+
+logging.basicConfig(
+    level=logging.INFO,
+    stream=sys.stdout,
+    format="%(levelname)s - %(name)s - %(message)s"
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +36,21 @@ def get_settings() -> Settings:
 
 # --- 2. Error Handling ---
 
+class ErrorData(TypedDict):
+    public_message:str
+    status_code:int
+    is_retryable:bool
+    raw_info:str
+    internal_message:str
+    
+
 class LLMServiceError(Exception):
-    def __init__(self, *, internal_message: str, public_message: str, status_code: int, raw_response: str):
+    def __init__(self, *, internal_message: str, public_message: str, status_code: int, raw_response: str, is_retryable:bool):
         self.internal_message = internal_message
         self.public_message = public_message
         self.status_code = status_code
         self.raw_response = raw_response
+        self.is_retryable = is_retryable
         super().__init__(internal_message)
 
 # --- 3. The Modernized LLM Service ---
@@ -43,33 +62,55 @@ class LLMService:
         self.default_model = default_model
         logger.info(f"LLMService initialized with default model: {default_model}")
 
-    async def _core_generator(
-        self, 
-        contents: list, 
-        temperature: float, 
-        model_override: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
-        """Private engine for all streaming/SSE methods."""
-        try:
-            # Use the frontend's choice, or fall back to the .env default
-            #print(f"default: {self.default_model}")
-            target_model = model_override or self.default_model
-            #print(f"contents: {contents}")
-            #print(f"target_model: {target_model}")
-            config = types.GenerateContentConfig(temperature=temperature)
-            #print(f"config: {config}")
-            async for chunk in await self.client.aio.models.generate_content_stream(
-                model=target_model,
-                contents=contents,
-                config=config
-            ):
-                if chunk.text:
-                    yield chunk.text
-        except Exception as e:
-            logger.exception("Gemini API communication failed")
-            raise e
 
-    # --- Your Required Methods ---
+    @staticmethod
+    def extract_error_details(raw_error_val: Any) -> ErrorData:
+
+        raw_error_str= str(raw_error_val)
+
+        # Default: Assume a generic server-side issue
+        errorData:ErrorData = {
+            "public_message":"An AI provider error occurred.",
+            "status_code":500,
+            "is_retryable":True,
+            "raw_info":raw_error_str,
+            "internal_message":raw_error_str
+        }
+        
+        try:
+            # \{.*\} means "Find the first { and match everything until the last }"
+            match = re.search(r"\{.*\}", raw_error_str, re.DOTALL)
+
+            if match:
+                dict_str = match.group(0)                
+
+                # We use literal_eval because the SDK uses single quotes '
+                error_dict = ast.literal_eval(dict_str)
+
+                nested_msg = error_dict.get('error', {}).get('message', "")
+
+                if any(word in nested_msg.lower() for word in ["temperature", "invalid", "400"]):
+                    errorData["public_message"] = nested_msg.split(':')[-1].strip()
+                    errorData["status_code"] = 400
+                    errorData["is_retryable"] = False
+                
+                elif any(word in nested_msg.lower() for word in ["quota", "limit", "429"]):
+                    errorData["public_message"] = "Rate limit reached. Please wait a moment."
+                    errorData["status_code"] = 429
+                    errorData["is_retryable"] = True
+                else:
+                    errorData["public_message"] = nested_msg
+
+                return errorData
+
+        except Exception as e:
+            logger.error(f"Surgical parsing failed, falling back to 500: {e}")
+            pass
+
+        return errorData
+
+
+    # --- Methods ---
 
     async def get_complete(
         self, 
@@ -79,14 +120,25 @@ class LLMService:
         """Full response implementation."""
         contents = self._prepare_contents(prompt, history = kwargs.get("history"))
         config = types.GenerateContentConfig(temperature = kwargs.get("temperature"))
-        
-        response = await self.client.aio.models.generate_content(
-            model= kwargs.get("model_name") or self.default_model,
-            contents=contents,
-            config=config
-        )
-        return response.text or "No response generated."
-    
+
+        try:
+            response = await self.client.aio.models.generate_content(
+                model= kwargs.get("model_name") or self.default_model,
+                contents=contents,
+                config=config
+            )
+            return response.text or "No response generated." 
+        except Exception as e: 
+            error_data = LLMService.extract_error_details(e)
+            logger.exception(f"LLM error has been captured: {error_data}")
+
+            raise LLMServiceError(
+                public_message = error_data["public_message"],
+                internal_message = error_data["internal_message"],
+                status_code = error_data["status_code"],
+                raw_response = error_data["raw_info"],
+                is_retryable = error_data["is_retryable"]
+            )  
 
 
     async def get_stream(
@@ -96,10 +148,36 @@ class LLMService:
     ) -> AsyncGenerator[str, None]:
         """Standard chunk streaming."""
         contents = self._prepare_contents(prompt, kwargs.get("history"))
-        #print(f"***contents: {contents}")
-        async for text in self._core_generator(contents, kwargs.get("temperature"), kwargs.get("model_name")):
-            yield text   
+        target_model = kwargs.get("model_name")
+        config = types.GenerateContentConfig(temperature=kwargs.get("temperature"))
 
+        init_stream = await self.client.aio.models.generate_content_stream(
+            model=target_model,
+            contents=contents,
+            config=config
+        )
+
+        async def _generator():
+
+            try:
+                async for chunk in init_stream:
+                    if chunk.text:
+                        yield chunk.text
+            except Exception as e:
+
+                error_data = LLMService.extract_error_details(e)
+                logger.exception(f"LLM error has been captured: {error_data}")
+
+                raise LLMServiceError(
+                    public_message = error_data["public_message"],
+                    internal_message = error_data["internal_message"],
+                    status_code = error_data["status_code"],
+                    raw_response = error_data["raw_info"],
+                    is_retryable = error_data["is_retryable"]
+                )
+
+        return _generator()
+        
 
     async def get_raw_sse_stream(
         self, 
@@ -107,18 +185,29 @@ class LLMService:
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """SSE formatted streaming."""
-        async for text in self.get_stream(prompt, **kwargs):
-            yield text #There is already a utility that formats SSE responses
+        try:
+            generator = await self.get_stream(prompt, **kwargs)
+            async for text in generator:
+                yield text #There is already a utility that formats SSE responses
+        except Exception as e:
+            logger.exception(f"***Error: {e}")
+            error_data = LLMService.extract_error_details(e)
+            logger.exception(f"LLM error has been captured: {error_data}")
+
+            raise LLMServiceError(
+                public_message = error_data["public_message"],
+                internal_message = error_data["internal_message"],
+                status_code = error_data["status_code"],
+                raw_response = error_data["raw_info"],
+                is_retryable = error_data["is_retryable"]
+            )
 
     def _prepare_contents(self, prompt: str, history: Optional[List[HistoryItem]]) -> list:
         contents = []
         if history:
             contents.extend({"role": item.role, "parts": [{"text": item.text}]} for item in history)
         contents.append({"role": "user", "parts": [{"text": prompt}]})
-        return contents 
-
-
-
+        return contents
 
 
     """This is going to be used as some sort of checkup to update the list of available models. 

@@ -1,5 +1,10 @@
 import json
 from typing import AsyncGenerator
+from venv import logger
+
+from fastapi import HTTPException
+
+from LLMService import LLMServiceError
 
 def complete_formatter_text(result: str) -> str: 
     return result 
@@ -13,15 +18,29 @@ async def stream_formatter_json(raw_stream):
     Takes the raw text stream from LLMService and formats it 
     into line-delimited JSON (NDJSON) and encodes it for HTTP streaming.
     """
-    async for text_chunk in raw_stream:
-       
-        data = {"text": text_chunk}
+    try:
+        async for text_chunk in raw_stream:
         
-        # 2. Serialize to a JSON string and add a newline (NDJSON)
-        json_string = json.dumps(data, ensure_ascii=False) + "\n"
-        
-        # 3. Encode the string to bytes for the StreamingResponse
-        yield json_string.encode("utf-8")
+            data = {"text": text_chunk}
+            
+            # 2. Serialize to a JSON string and add a newline (NDJSON)
+            json_string = json.dumps(data, ensure_ascii=False) + "\n"
+            
+            # Encode the string to bytes for the StreamingResponse
+            yield json_string.encode("utf-8")
+    except LLMServiceError as e: 
+        raise HTTPException( 
+            status_code=e.status_code, 
+            detail = { 
+                "error": "LLM_PROVIDER_ERROR", 
+                "message": e.public_message 
+            } 
+        ) 
+    except Exception as e:
+        logger.error(f"Streaming Error: {e}", exc_info=True)
+        message = getattr(e, "public_message", "There was an issue with streaming")
+        error_payload = json.dumps({"text": message}) + "\n"
+        yield error_payload.encode("utf-8")
 
 
 async def stream_formatter_text(raw_stream):
@@ -29,10 +48,15 @@ async def stream_formatter_text(raw_stream):
     Takes the raw text stream from LLMService and formats it 
     into plain text.
     """
-    async for text_chunk in raw_stream:       
-       
-        # 3. Encode the string to bytes for the StreamingResponse
-        yield text_chunk.encode("utf-8")
+    try:
+        async for text_chunk in raw_stream:
+            # Encode the string to bytes for the StreamingResponse
+            yield text_chunk.encode("utf-8")
+    except Exception as e:
+        logger.error(f"Streaming Error: {e}", exc_info=True)
+        message = getattr(e, "public_message", "There was an issue with streaming")
+        error_payload = message
+        yield error_payload.encode("utf-8")
 
     
 async def stream_formatter_sse(raw_stream) -> AsyncGenerator[str, None]:
@@ -52,8 +76,10 @@ async def stream_formatter_sse(raw_stream) -> AsyncGenerator[str, None]:
     
     except Exception as e:
         # Send an error event with a message
-        error_payload = json.dumps({"message": str(e)})
-        yield f"event: sse_error\ndata:{error_payload}\n\n"
+        logger.error(f"Streaming Error: {e}", exc_info=True)
+        message = getattr(e, "public_message", "There was an issue with streaming")
+        error_payload = json.dumps({"text": message})
+        yield f"event: sse_error\n data:{error_payload}\n\n"
 
         
 
