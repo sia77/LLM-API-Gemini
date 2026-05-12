@@ -1,14 +1,15 @@
 from enum import Enum
 import json
+import logging
 from pathlib import Path
 from typing import Annotated, Literal, Optional
-from venv import logger
 from fastapi import APIRouter, Depends, HTTPException, Header, Response
 from fastapi.responses import StreamingResponse
 
 from LLMService import LLMService, get_llm_service, LLMServiceError
 from models import QueryRequest
 from stream_formatters import complete_formatter_json, complete_formatter_text, stream_formatter_json, stream_formatter_text, stream_formatter_sse
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     tags = ["chat"]
@@ -33,34 +34,15 @@ async def query_stream_sse(
     llm_service:LLMService = Depends(get_llm_service)
 ):
     """This endpoint handles sse GET requests - no history due to GET string length limitations"""
-    try:
-        settings = { 
-            k:v 
-            for k,v in {"temperature":temperature, "model_name":model_name}.items() 
-            if v is not None
-        }        
-        raw_stream = llm_service.get_raw_sse_stream(prompt, **settings)
-        return StreamingResponse(stream_formatter_sse(raw_stream), media_type="text/event-stream")
-    except LLMServiceError as e:
-        raise HTTPException( 
-            status_code = e.status_code, 
-            detail = { 
-                "error": "LLM_PROVIDER_ERROR", 
-                "type": type(e).__name__, 
-                "message": e.public_message 
-            } 
-        )
-    except Exception as e:
-        # This is the "Safety Net" for everything else.
-        # Log the real 'e' so you can fix it later.
-        logger.error(f"Unhandled system crash: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail = { 
-                "error": "UNEXPECTED_CRASH",
-                "message": "An internal error occurred. Please try again later."
-            }
-        )
+
+    settings = { 
+        k:v 
+        for k,v in {"temperature":temperature, "model_name":model_name}.items() 
+        if v is not None
+    }        
+    raw_stream = llm_service.get_raw_sse_stream(prompt, **settings)
+    return StreamingResponse(stream_formatter_sse(raw_stream), media_type="text/event-stream")
+
     
 COMPLETE_FORMATTERS = { 
     "text": (complete_formatter_text, "text/plain"), 
@@ -79,51 +61,32 @@ async def query_complete(
 ):
     """This end point responds in complete in the form of text/plain or application/json format"""
 
-    try:
-        is_json = (x_format == AcceptHeader.json)
-        format_key = "json" if is_json else "text"  
-        formatter, media_type = COMPLETE_FORMATTERS[format_key]  
-        settings = { 
-            k:v
-            for k,v in
-            {
-                "temperature":request_data.temperature, 
-                "history":request_data.history, 
-                "model_name":request_data.model_name
-            }.items()
-            if v is not None 
-        }
-     
-        result = await llm_service.get_complete(
-            request_data.prompt, 
-            **settings
-        )
+    is_json = (x_format == AcceptHeader.json)
+    format_key = "json" if is_json else "text"  
+    formatter, media_type = COMPLETE_FORMATTERS[format_key]  
+    settings = { 
+        k:v
+        for k,v in
+        {
+            "temperature":request_data.temperature, 
+            "history":request_data.history, 
+            "model_name":request_data.model_name
+        }.items()
+        if v is not None 
+    }
+    
+    result = await llm_service.get_complete(
+        request_data.prompt, 
+        **settings
+    )
 
-        body = formatter(result)
+    body = formatter(result)
 
-        if isinstance(body, dict):
-             return body # FastAPI auto-converts dict to JSON response
-             
-        return Response(content=body, media_type=media_type)
-    except LLMServiceError as e: 
-        raise HTTPException( 
-            status_code=e.status_code, 
-            detail = { 
-                "error": "LLM_PROVIDER_ERROR", 
-                "message": e.public_message 
-            } 
-        ) 
-    except Exception as e: 
-        # This is the "Safety Net" for everything else.
-        # Log the real 'e' so you can fix it later.
-        logger.error(f"Unhandled system crash: {str(e)}", exc_info=True)
-        raise HTTPException( 
-            status_code=500, 
-            detail={
-                "error": "UNEXPECTED_CRASH",
-                "message": "An internal error occurred. Please try again later."
-            } 
-        )
+    if isinstance(body, dict):
+            return body # FastAPI auto-converts dict to JSON response
+            
+    return Response(content=body, media_type=media_type)
+
 
     
 FORMATTERS = {
@@ -144,65 +107,44 @@ async def query_stream(
 ):
     """This end point responds in stream in the form of text/plain or application/json format"""
 
+    is_json = (x_format == AcceptHeader.json)
+    format_key = "json" if is_json else "text"
+
+    formatter, media_type = FORMATTERS[format_key]
+    settings = {
+        k:v
+        for k,v in {
+            "temperature":request_data.temperature, 
+            "history":request_data.history,
+            "model_name":request_data.model_name
+        }.items()
+        if v is not None
+    }
+
+    gen_obj = await llm_service.get_stream(
+        request_data.prompt,
+        **settings            
+    )
+
     try:
-
-        is_json = (x_format == AcceptHeader.json)
-        format_key = "json" if is_json else "text"
-
-        formatter, media_type = FORMATTERS[format_key]
-        settings = {
-            k:v
-            for k,v in {
-                "temperature":request_data.temperature, 
-                "history":request_data.history,
-                "model_name":request_data.model_name
-            }.items()
-            if v is not None
-        }
-
-        gen_obj = await llm_service.get_stream(
-            request_data.prompt,
-            **settings            
-        )
-
-        try:
-            # We use __anext__() to manually grab the first chunk
-            first_chunk = await gen_obj.__anext__()
-        except StopAsyncIteration:
-            first_chunk = "" # Handle empty responses gracefully
+        # We use __anext__() to manually grab the first chunk
+        first_chunk = await gen_obj.__anext__()
+    except StopAsyncIteration:
+        first_chunk = "" # Handle empty responses gracefully
 
 
-        async def combined_gen():
-            if first_chunk:
-                yield first_chunk
-            async for chunk in gen_obj:
-                yield chunk
+    async def combined_gen():
+        if first_chunk:
+            yield first_chunk
+        async for chunk in gen_obj:
+            yield chunk
 
-        return StreamingResponse(
-            formatter(combined_gen()), 
-            media_type=media_type
-        )
+    return StreamingResponse(
+        formatter(combined_gen()), 
+        media_type=media_type
+    )
     
-    except LLMServiceError as e:
 
-        raise HTTPException( 
-            status_code=e.status_code, 
-            detail = { 
-                "error": "LLM_PROVIDER_ERROR", 
-                "message": e.public_message 
-            } 
-        ) 
-    except Exception as e: 
-        # This is the "Safety Net" for everything else.
-        # Log the real 'e' so you can fix it later.
-        logger.error(f"Unhandled system crash: {str(e)}", exc_info=True)
-        raise HTTPException( 
-            status_code=500, 
-            detail={
-                "error": "UNEXPECTED_CRASH",
-                "message": "An internal error occurred. Please try again later."
-            } 
-        )
     
 @router.get('/models')
 async def get_models():   
