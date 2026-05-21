@@ -88,18 +88,25 @@ class LLMService:
                 error_dict = ast.literal_eval(dict_str)
 
                 nested_msg = error_dict.get('error', {}).get('message', "")
+                lowercase_msg = nested_msg.lower()
 
-                if any(word in nested_msg.lower() for word in ["temperature", "invalid", "400"]):
+                if any(word in lowercase_msg for word in ["temperature", "invalid", "400"]):
                     errorData["public_message"] = nested_msg.split(':')[-1].strip()
                     errorData["status_code"] = 400
                     errorData["is_retryable"] = False
-                
-                elif any(word in nested_msg.lower() for word in ["quota", "limit", "429"]):
+
+                elif "tier" in lowercase_msg or "limit: 0" in lowercase_msg:
+                    errorData["public_message"] = "The selected model is unavailable on this account tier."
+                    errorData["status_code"] = 429
+                    errorData["is_retryable"] = False
+
+                elif any(word in lowercase_msg for word in ["quota", "limit", "429"]):
                     errorData["public_message"] = "Rate limit reached. Please wait a moment."
                     errorData["status_code"] = 429
                     errorData["is_retryable"] = True
                 else:
-                    errorData["public_message"] = nested_msg
+                    if nested_msg:
+                        errorData["public_message"] = nested_msg
 
                 return errorData
 
@@ -201,6 +208,8 @@ class LLMService:
                 raw_response = error_data["raw_info"],
                 is_retryable = error_data["is_retryable"]
             )
+        
+            # yield f"event: sse_error\n data:{error_payload}\n\n"
 
     def _prepare_contents(self, prompt: str, history: Optional[List[HistoryItem]]) -> list:
         contents = []

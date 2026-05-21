@@ -78,11 +78,6 @@ async def stream_formatter_sse(raw_stream) -> AsyncGenerator[str, None]:
         # Send an error event with a message
         logger.error(f"Streaming Error: {e}", exc_info=True)
         message = getattr(e, "public_message", "There was an issue with streaming")
-        error_payload = json.dumps({"text": message})
-        yield f"event: sse_error\n data:{error_payload}\n\n"
-
-        
-
-
-
+        error_payload = json.dumps({"message": message})
+        yield f"event: sse_error\ndata: {error_payload}\n\n"
 
